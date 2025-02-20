@@ -7,6 +7,10 @@ from fiber.logging_utils import get_logger
 from fiber.miner.core import configuration
 from fiber.miner.core.models.config import Config
 
+import time
+from taocd.db_manager import HOST_IP
+from taocd.miner_worker import insert_system_log
+
 logger = get_logger(__name__)
 
 
@@ -24,6 +28,18 @@ async def verify_request(
 ):
     if not config.nonce_manager.nonce_is_valid(nonce):
         logger.debug("Nonce is not valid!")
+        await insert_system_log({
+            'host_ip': HOST_IP,
+            'post_endpoint': None,
+            'vali_hk': validator_hotkey,
+            'miner_hk': miner_hotkey,
+            'queue': None,
+            'worker_name': None,
+            'function_name': 'verify_request',
+            'level': 3,
+            'message': f"status_code=401, Nonce is not valid!",
+            'detail': f"nonce={nonce}, config.encryption_keys_handler.nonce_manager._nonces={config.encryption_keys_handler.nonce_manager._nonces}, current_time_ns={time.time_ns()}, mcst.NONCE_WINDOW_NS={mcst.NONCE_WINDOW_NS}, signature={signature}, miner_hotkey={miner_hotkey}, validator_hotkey={validator_hotkey}"
+        })
         raise HTTPException(
             status_code=401,
             detail="Oi, that nonce is not valid!",
@@ -37,12 +53,36 @@ async def verify_request(
         signer_ss58_address=validator_hotkey,
         signature=signature,
     ):
+        await insert_system_log({
+            'host_ip': HOST_IP,
+            'post_endpoint': None,
+            'vali_hk': validator_hotkey,
+            'miner_hk': miner_hotkey,
+            'queue': None,
+            'worker_name': None,
+            'function_name': 'verify_request',
+            'level': 3,
+            'message': f"status_code=401, invalid signature!",
+            'detail': f"message={message}, signature={signature}, signer_ss58_address={validator_hotkey},nonce={nonce}, miner_hotkey={miner_hotkey}"
+        })
         raise HTTPException(
             status_code=401,
             detail="Oi, invalid signature, you're not who you said you were!",
         )
 
     if miner_hotkey != config.keypair.ss58_address:
+        await insert_system_log({
+            'host_ip': HOST_IP,
+            'post_endpoint': None,
+            'vali_hk': validator_hotkey,
+            'miner_hk': miner_hotkey,
+            'queue': None,
+            'worker_name': None,
+            'function_name': 'verify_request',
+            'level': 3,
+            'message': f"status_code=401, invalid miner hotkey!",
+            'detail': f"config.keypair.ss58_address={config.keypair.ss58_address}, miner_hotkey={miner_hotkey}"
+        })
         raise HTTPException(
             status_code=401,
             detail="Oi, invalid miner hotkey - that's not me!",

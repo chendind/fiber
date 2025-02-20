@@ -14,6 +14,8 @@ from fiber.encrypted.miner.core.models.encryption import SymmetricKeyInfo
 from fiber.encrypted.miner.security.nonce_management import NonceManager
 from fiber.logging_utils import get_logger
 
+from taocd.redis_client_sn19total import redis_client
+
 logger = get_logger(__name__)
 
 
@@ -35,10 +37,41 @@ class EncryptionKeysHandler:
         if hotkey_ss58_address not in self.symmetric_keys_fernets:
             self.symmetric_keys_fernets[hotkey_ss58_address] = {}
         self.symmetric_keys_fernets[hotkey_ss58_address][uuid] = symmetric_key_info
+        self.save_symmetric_keys()
+        logger.info(f"[add_symmetric_key] self.symmetric_keys_fernets[{hotkey_ss58_address}][{uuid}] = {symmetric_key_info}")
 
     def get_symmetric_key(self, hotkey_ss58_address: str, uuid: str) -> SymmetricKeyInfo:
         if hotkey_ss58_address not in self.symmetric_keys_fernets or uuid not in self.symmetric_keys_fernets[hotkey_ss58_address]:
-            return None
+            # 第一次先直接从symmetric_keys_fernets里拿。如果没拿到，再load本地文件。减少磁盘IO
+            self.load_symmetric_keys()
+            if hotkey_ss58_address not in self.symmetric_keys_fernets or uuid not in self.symmetric_keys_fernets[hotkey_ss58_address]:
+                # 还是没有，从redis里读取
+                try:
+                    redis_key_name = f"{self.hotkey}_{mcst.SYMMETRIC_KEYS_FILENAME}"
+                    redis_value = redis_client.safe_get(redis_key_name)
+                    if redis_value:
+                        decrypted_data = self.asymmetric_fernet.decrypt(redis_value)
+                        loaded_keys: dict[str, dict[str, dict[str, str]]] = json.loads(decrypted_data.decode())
+                        self.symmetric_keys_fernets = {
+                            hotkey: {
+                                uuid: SymmetricKeyInfo(
+                                    Fernet(key_data["key"]),
+                                    datetime.fromisoformat(key_data["expiration_time"]),
+                                )
+                                for uuid, key_data in keys.items()
+                            }
+                            for hotkey, keys in loaded_keys.items()
+                        }
+                        logger.info(f"Loaded {len(self.symmetric_keys_fernets)} symmetric keys from redis")
+                        logger.info(f"[get_symmetric_key_from_redis]")
+                        if hotkey_ss58_address not in self.symmetric_keys_fernets or uuid not in self.symmetric_keys_fernets[hotkey_ss58_address]:
+                            # 从redis中读取后，还是没有，返回None
+                            return None
+                    else:
+                        raise Exception(f"redis_value: {redis_value}")
+                except Exception as e:
+                    logger.error(f"Error get symmetric keys from redis: {e}")
+                    return None
         return self.symmetric_keys_fernets[hotkey_ss58_address][uuid]
 
     def save_symmetric_keys(self) -> None:
@@ -59,6 +92,14 @@ class EncryptionKeysHandler:
         logger.info(f"Saving {len(serializable_keys)} symmetric keys to {filename}")
         with open(filename, "wb") as file:
             file.write(encrypted_data)
+        # 将数据存储在redis
+        try:
+            redis_key_name = filename
+            redis_value = encrypted_data
+            redis_client.safe_set(redis_key_name, redis_value)
+            logger.info(f"Saved symmetric keys to redis")
+        except Exception as e:
+            logger.error(f"Error saving symmetric keys to redis: {e}")
 
     def load_symmetric_keys(self) -> None:
         filename = f"{self.hotkey}_{mcst.SYMMETRIC_KEYS_FILENAME}"

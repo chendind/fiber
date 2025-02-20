@@ -12,6 +12,10 @@ from fiber.encrypted.miner.core.models.encryption import SymmetricKeyExchange
 from fiber.encrypted.miner.dependencies import get_config
 from fiber.logging_utils import get_logger
 
+import asyncio
+from taocd.db_manager import HOST_IP, get_event_loop
+from taocd.miner_worker import insert_system_log
+
 logger = get_logger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
@@ -65,6 +69,24 @@ def decrypt_general_payload(
     logger.debug(f"Decrypting payload from validator {validator_hotkey} for miner {miner_hotkey}")
     symmetric_key_info = config.encryption_keys_handler.get_symmetric_key(validator_hotkey, symmetric_key_uuid)
     if not symmetric_key_info:
+        try:
+            loop = get_event_loop()
+            loop.run_until_complete(
+                insert_system_log({
+                    'host_ip': HOST_IP,
+                    'post_endpoint': None,
+                    'vali_hk': validator_hotkey,
+                    'miner_hk': miner_hotkey,
+                    'queue': None,
+                    'worker_name': None,
+                    'function_name': 'decrypt_general_payload',
+                    'level': 3,
+                    'message': f"status_code=400, No symmetric key found for that hotkey and uuid",
+                    'detail': f"symmetric_key_uuid={symmetric_key_uuid}, validator_hotkey={validator_hotkey}, config.encryption_keys_handler.symmetric_keys_fernets={config.encryption_keys_handler.symmetric_keys_fernets}"
+                })
+            )
+        except Exception as e:
+            logger.error(f"Error inserting system log: {e}")
         raise HTTPException(status_code=400, detail="No symmetric key found for that hotkey and uuid")
 
     decrypted_data = symmetric_key_info.fernet.decrypt(encrypted_payload)
