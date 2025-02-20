@@ -47,7 +47,7 @@ class EncryptionKeysHandler:
             if hotkey_ss58_address not in self.symmetric_keys_fernets or uuid not in self.symmetric_keys_fernets[hotkey_ss58_address]:
                 # 还是没有，从redis里读取
                 try:
-                    redis_key_name = f"{self.hotkey}_{mcst.SYMMETRIC_KEYS_FILENAME}"
+                    redis_key_name = f"{mcst.SYMMETRIC_KEYS_FILENAME}"
                     redis_value = redis_client.safe_get(redis_key_name)
                     if redis_value:
                         decrypted_data = self.asymmetric_fernet.decrypt(redis_value)
@@ -75,7 +75,7 @@ class EncryptionKeysHandler:
         return self.symmetric_keys_fernets[hotkey_ss58_address][uuid]
 
     def save_symmetric_keys(self) -> None:
-        filename = f"{self.hotkey}_{mcst.SYMMETRIC_KEYS_FILENAME}"
+        filename = f"{mcst.SYMMETRIC_KEYS_FILENAME}"
         serializable_keys = {
             hotkey: {
                 uuid: {
@@ -102,7 +102,7 @@ class EncryptionKeysHandler:
             logger.error(f"Error saving symmetric keys to redis: {e}")
 
     def load_symmetric_keys(self) -> None:
-        filename = f"{self.hotkey}_{mcst.SYMMETRIC_KEYS_FILENAME}"
+        filename = f"{mcst.SYMMETRIC_KEYS_FILENAME}"
         if os.path.exists(filename):
             with open(filename, "rb") as f:
                 encrypted_data = f.read()
@@ -138,7 +138,19 @@ class EncryptionKeysHandler:
 
     def load_asymmetric_keys(self) -> None:
         # NOTE: Allow this to be passed in via env too? Does it matter?
-        self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        # self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        try:
+            with open('private_key.pem', 'rb') as pem_in:
+                pem_data = pem_in.read()
+                self.private_key = serialization.load_pem_private_key(
+                    pem_data,
+                    password=None
+                )
+            logger.info(f"Success loading private key: {self.private_key}")
+        except Exception as e:
+            logger.error(f"Error loading private key: {e}")
+            raise e
+
         self.public_key = self.private_key.public_key()
         self.public_bytes = self.public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
